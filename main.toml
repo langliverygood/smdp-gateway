@@ -1,0 +1,15 @@
+[Server]
+AdminAddr = "127.0.0.1:6102"
+
+[Log]
+FileName = "logs/smdp-gateway.log"
+Level = "info"
+MaxAgeByHour = 168
+RotationTimeByMinute = 60
+
+[MQTT]
+Broker = "tcp://127.0.0.1:1883" 
+ClientID = "root"
+Password = "stoncle666"
+
+
