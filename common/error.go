@@ -41,20 +41,20 @@ var (
 	ErrCodeDataSourceTypeInvalid = -10009
 	// ErrCodeDataSourceUDPAddrEmpty 数据源UDP地址为空
 	ErrCodeDataSourceUDPAddrEmpty = -10010
-	// ErrCodeDataSourceUDPAddrInvalidIP 数据源UDP地址IP无效,仅支持组播地址:端口
+	// ErrCodeDataSourceUDPAddrInvalidIP 数据源UDP地址IP无效,仅支持组播地址
 	ErrCodeDataSourceUDPAddrInvalidIP = -10011
 	// ErrCodeDataSourceUDPAddrInvalidPort 数据源UDP地址端口无效(端口范围1~65535)
 	ErrCodeDataSourceUDPAddrInvalidPort = -10012
-	// ErrCodeDataSourceMQTTAddrEmpty 数据源MQTT主题为空
-	ErrCodeDataSourceMQTTAddrEmpty = -10013
-	// ErrCodeDataSourceMQTTAddrTooLong 数据源MQTT主题长度超过限制
-	ErrCodeDataSourceMQTTAddrTooLong = -10014
-	// ErrCodeDataSourceMQTTAddrInvalid 数据源MQTT主题格式无效
-	ErrCodeDataSourceMQTTAddrInvalid = -10015
+	// ErrCodeDataSourceMQTTAddrInvalid 数据源MQTT地址无效
+	ErrCodeDataSourceMQTTAddrInvalid = -10013
+	// ErrCodeDataSourceMQTTAddrTopicTooLong 数据源MQTT主题长度超过限制
+	ErrCodeDataSourceMQTTAddrTopicTooLong = -10014
+	// ErrCodeDataSourceMQTTAddrTopicInvalid 数据源MQTT主题格式无效
+	ErrCodeDataSourceMQTTAddrTopicInvalid = -10015
 	// ErrCodeDataSourceIDNotFound 数据源协议ID不存在
-	ErrCodeDataSourceIDNotFound = -100016
+	ErrCodeDataSourceIDNotFound = -10016
 	// ErrCodeDataSourceStateOpened 数据源为开启状态,无法更新或删除
-	ErrCodeDataSourceStateOpened = -100017
+	ErrCodeDataSourceStateOpened = -10017
 )
 
 func init() {
@@ -80,11 +80,11 @@ func init() {
 	CodeMessage[ErrCodeDataSourceDescriptionTooLong] = "数据源描述长度超过限制"
 	CodeMessage[ErrCodeDataSourceTypeInvalid] = "数据源类型无效"
 	CodeMessage[ErrCodeDataSourceUDPAddrEmpty] = "数据源UDP地址为空"
-	CodeMessage[ErrCodeDataSourceUDPAddrInvalidIP] = "数据源UDP地址IP无效,仅支持组播地址:端口"
+	CodeMessage[ErrCodeDataSourceUDPAddrInvalidIP] = "数据源UDP地址IP无效,仅支持组播地址"
 	CodeMessage[ErrCodeDataSourceUDPAddrInvalidPort] = "数据源UDP地址端口无效(端口范围1~65535)"
-	CodeMessage[ErrCodeDataSourceMQTTAddrEmpty] = "数据源MQTT主题为空"
-	CodeMessage[ErrCodeDataSourceMQTTAddrTooLong] = "数据源MQTT主题长度超过限制"
-	CodeMessage[ErrCodeDataSourceMQTTAddrInvalid] = "数据源MQTT主题格式无效"
+	CodeMessage[ErrCodeDataSourceMQTTAddrInvalid] = "数据源MQTT地址无效"
+	CodeMessage[ErrCodeDataSourceMQTTAddrTopicTooLong] = "数据源MQTT主题长度超过限制"
+	CodeMessage[ErrCodeDataSourceMQTTAddrTopicInvalid] = "数据源MQTT主题格式无效"
 	CodeMessage[ErrCodeDataSourceIDNotFound] = "数据源协议ID不存在"
 	CodeMessage[ErrCodeDataSourceStateOpened] = "数据源为开启状态,无法更新或删除"
 }

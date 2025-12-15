@@ -6,9 +6,6 @@ import (
 	"smdp-gateway/common"
 	"smdp-gateway/logger"
 	"smdp-gateway/utils"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/kataras/iris/v12"
 	"go.uber.org/zap"
@@ -50,78 +47,72 @@ func checkDataSourceType(ctx iris.Context, t string) bool {
 	return true
 }
 
-func checkDataSourceAddr(ctx iris.Context, t, addr string) bool {
+func checkDataSourceAddr(ctx iris.Context, t string, addr *common.DataSourceAddrStruct) bool {
+	if addr == nil {
+		errCode := common.ErrCodeDataSourceAddrEmpty
+		common.ReturnBadRequest(ctx, errCode)
+		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
+		return false
+	}
+
 	switch t {
 	case "UDP":
-		return checkDataSourceAddrWhenUDP(ctx, addr)
+		return checkDataSourceAddrWhenUDP(ctx, addr.UDP)
 	case "MQTT":
-		return checkDataSourceAddrWhenMQTT(ctx, addr)
+		return checkDataSourceAddrWhenMQTT(ctx, addr.MQTT)
 	}
 
 	return false
 }
 
-func checkDataSourceAddrWhenUDP(ctx iris.Context, addr string) bool {
-	if len(addr) == 0 {
+func checkDataSourceAddrWhenUDP(ctx iris.Context, udp *common.DataSourceUDPAddrStruct) bool {
+	if udp == nil {
 		errCode := common.ErrCodeDataSourceUDPAddrEmpty
 		common.ReturnBadRequest(ctx, errCode)
 		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
 		return false
 	}
-	// 纯端口
-	if port, err := strconv.Atoi(addr); err == nil {
-		if port < 1 || port > 65535 {
-			errCode := common.ErrCodeDataSourceUDPAddrInvalidPort
+	// 端口
+	if udp.Port == 0 {
+		errCode := common.ErrCodeDataSourceUDPAddrInvalidPort
+		common.ReturnBadRequest(ctx, errCode)
+		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
+		return false
+	}
+	// 组播地址
+	if len(udp.MulticastIP) > 0 {
+		ip := net.ParseIP(udp.MulticastIP)
+		if ip == nil || !utils.IsMulticastIP(ip) {
+			errCode := common.ErrCodeDataSourceUDPAddrInvalidIP
 			common.ReturnBadRequest(ctx, errCode)
 			logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
 			return false
 		}
-		return true
-	}
-	// 组播地址加端口
-	parts := strings.Split(addr, ":")
-	if len(parts) != 2 {
-		errCode := common.ErrCodeDataSourceUDPAddrInvalidPort
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
-		return false
-	}
-	ipStr, portStr := parts[0], parts[1]
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		errCode := common.ErrCodeDataSourceUDPAddrInvalidPort
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
-		return false
-	}
-	if !utils.IsMulticastIP(ip) { // 校验是否为组播地址
-		errCode := common.ErrCodeDataSourceUDPAddrInvalidIP
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
-		return false
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
-		errCode := common.ErrCodeDataSourceUDPAddrInvalidPort
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("checkDataSourceAddrWhenUDP " + common.CodeMessage[errCode])
-		return false
 	}
 	return true
 }
 
-func checkDataSourceAddrWhenMQTT(ctx iris.Context, addr string) bool {
-	if len(addr) == 0 {
-		errCode := common.ErrCodeDataSourceMQTTAddrEmpty
+func checkDataSourceAddrWhenMQTT(ctx iris.Context, mqtt *common.DataSourceMQTTAddrStruct) bool {
+	if mqtt == nil {
+		errCode := common.ErrCodeDataSourceMQTTAddrInvalid
 		common.ReturnBadRequest(ctx, errCode)
 		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
 		return false
 	}
-	if len(addr) > 2048 {
-		errCode := common.ErrCodeDataSourceMQTTAddrTooLong
+	if len(mqtt.Broker) == 0 || len(mqtt.ClientID) == 0 ||
+		len(mqtt.Username) == 0 || len(mqtt.Password) == 0 || len(mqtt.Topics) == 0 {
+		errCode := common.ErrCodeDataSourceMQTTAddrInvalid
 		common.ReturnBadRequest(ctx, errCode)
 		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
 		return false
+	}
+	for _, t := range mqtt.Topics {
+		if len(t) > 2048 {
+			errCode := common.ErrCodeDataSourceMQTTAddrTopicTooLong
+			common.ReturnBadRequest(ctx, errCode)
+			logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
+			return false
+		}
 	}
 	return true
 }
@@ -131,8 +122,8 @@ func AddDataSource(ctx iris.Context) {
 	logger.Default(ctx).Info("AddDataSource", zap.String("ip", ctx.RemoteAddr()))
 
 	bodyBytes, _ := ctx.GetBody()
-	req := model{}
-	err := json.Unmarshal(bodyBytes, &req)
+	req := &common.DataSourceStruct{}
+	err := json.Unmarshal(bodyBytes, req)
 	if err != nil {
 		common.ReturnParseBodyError(ctx)
 		logger.Default(ctx).Error("AddDataSource 反序列化body失败", zap.Error(err))
@@ -148,7 +139,7 @@ func AddDataSource(ctx iris.Context) {
 	// 检查是否有重名
 	var pageNumber int = 1
 	var pageSize int = 10
-	items, err := selectByName(-1, req.Name, false, &pageNumber, &pageSize)
+	items, err := selectByName(-1, "", req.Name, false, &pageNumber, &pageSize)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("AddDataSource 根据Name查询数据库失败", zap.Error(err))
@@ -160,21 +151,8 @@ func AddDataSource(ctx iris.Context) {
 		logger.Default(ctx).Error("AddDataSource " + common.CodeMessage[errCode])
 		return
 	}
-	// 检查type+addr是否有重复
-	items, err = selectByConfig(req.Type, req.Addr)
-	if err != nil {
-		common.ReturnInternalError(ctx)
-		logger.Default(ctx).Error("AddDataSource 根据Type+Addr查询数据库失败", zap.Error(err))
-		return
-	}
-	if len(items) > 0 {
-		errCode := common.ErrCodeDataSourceConfigDuplicate
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("AddDataSource " + common.CodeMessage[errCode])
-		return
-	}
 	// 插入数据
-	err = insert(&req)
+	err = insert(req)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("AddDataSource 插入数据库失败", zap.Error(err))
@@ -255,7 +233,7 @@ func UpdateDataSourceConfig(ctx iris.Context) {
 	}
 
 	bodyBytes, _ := ctx.GetBody()
-	req := model{}
+	req := &common.DataSourceStruct{}
 	err = json.Unmarshal(bodyBytes, &req)
 	if err != nil {
 		common.ReturnParseBodyError(ctx)
@@ -272,33 +250,21 @@ func UpdateDataSourceConfig(ctx iris.Context) {
 	// 检查是否有重名
 	var pageNumber int = 1
 	var pageSize int = 10
-	items, err = selectByName(-1, req.Name, false, &pageNumber, &pageSize)
+	items, err = selectByName(-1, "", req.Name, false, &pageNumber, &pageSize)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("UpdateDataSourceConfig 根据Name查询数据库失败", zap.Error(err))
 		return
 	}
-	if len(items) > 0 {
+	if len(items) > 0 && items[0].ID != id {
 		errCode := common.ErrCodeDataSourceNameDuplicate
 		common.ReturnBadRequest(ctx, errCode)
 		logger.Default(ctx).Error("UpdateDataSourceConfig " + common.CodeMessage[errCode])
 		return
 	}
-	// 检查type+addr是否有重复
-	items, err = selectByConfig(req.Type, req.Addr)
-	if err != nil {
-		common.ReturnInternalError(ctx)
-		logger.Default(ctx).Error("UpdateDataSourceConfig 根据Type+Addr查询数据库失败", zap.Error(err))
-		return
-	}
-	if len(items) > 0 {
-		errCode := common.ErrCodeDataSourceConfigDuplicate
-		common.ReturnBadRequest(ctx, errCode)
-		logger.Default(ctx).Error("UpdateDataSourceConfig " + common.CodeMessage[errCode])
-		return
-	}
+
 	// 更新数据
-	err = updateConfig(id, &req)
+	err = updateConfig(id, req)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("UpdateDataSourceConfig 更新数据库失败", zap.Error(err))
@@ -365,60 +331,46 @@ func UpdateDataSourceState(ctx iris.Context) {
 // ListDataSources 获取数据源列表
 func ListDataSources(ctx iris.Context) {
 	state := ctx.URLParamIntDefault("state", -1)
+	sourceType := ctx.URLParam("type")
 	name := ctx.URLParam("name")
 	pageNumber := ctx.URLParamIntDefault("pageNumber", 1)
 	pageSize := ctx.URLParamIntDefault("pageSize", 10)
 
-	total, err := count(state, name)
+	total, err := selectCount(state, sourceType, name)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("ListDataSources 获取数据源总数失败", zap.Error(err))
 		return
 	}
 
-	items, err := selectByName(state, name, true, &pageNumber, &pageSize)
+	items, err := selectByName(state, sourceType, name, true, &pageNumber, &pageSize)
 	if err != nil {
 		common.ReturnInternalError(ctx)
 		logger.Default(ctx).Error("ListDataSources 获取数据源列表失败", zap.Error(err))
 		return
 	}
 
-	// TODO 添加数据源运行状态的逻辑
-	type modelSimple struct {
-		ID        string    `json:"id"`
-		State     int       `json:"state"`
-		Name      string    `json:"name"`
-		Type      string    `json:"type"`
-		Addr      string    `json:"addr"`
-		Utime     time.Time `json:"utime"`
-		IsRunning bool      `json:"isRunning"`
-		Message   string    `json:"message"`
-	}
 	var rsp struct {
-		Total      int64          `json:"total"`
-		PageNumber int            `json:"pageNumber"`
-		PageSize   int            `json:"pageSize"`
-		List       []*modelSimple `json:"list"`
+		Total      int64                            `json:"total"`
+		PageNumber int                              `json:"page_number"`
+		PageSize   int                              `json:"page_size"`
+		List       []*common.DataSourceDetailStruct `json:"list"`
 	}
 	if len(items) == 0 {
 		rsp.Total = total
 		rsp.PageNumber = pageNumber
 		rsp.PageSize = pageSize
-		rsp.List = []*modelSimple{}
+		rsp.List = []*common.DataSourceDetailStruct{}
 		common.ReturnOK(ctx, rsp)
 		return
 	}
 
 	for _, value := range items {
-		one := &modelSimple{
-			ID:    value.ID,
-			State: value.State,
-			Name:  value.Name,
-			Type:  value.Type,
-			Addr:  value.Addr,
-			Utime: value.Utime,
-		}
+		one := &common.DataSourceDetailStruct{}
+		one.DataSourceStruct = value
+		// TODO 添加数据源运行状态的逻辑
 		rsp.List = append(rsp.List, one)
+
 	}
 	rsp.Total = total
 	rsp.PageNumber = pageNumber
@@ -450,15 +402,10 @@ func GetDataSource(ctx iris.Context) {
 		return
 	}
 
-	type modelDetail struct {
-		model
-		IsRunning bool   `json:"isRunning"`
-		Message   string `json:"message"`
-	}
-
 	// TODO 添加数据源运行状态的逻辑
-	var rsp modelDetail
-	rsp.model = items[0]
+	rsp := &common.DataSourceDetailStruct{
+		DataSourceStruct: items[0],
+	}
 
 	common.ReturnOK(ctx, rsp)
 }

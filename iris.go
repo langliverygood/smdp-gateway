@@ -16,6 +16,11 @@ import (
 
 func registerRouter(app *iris.Application) {
 	app.Post("/api/datasource", common.Preprocessing, common.AdminAuth, datasource.AddDataSource)
+	app.Delete("/api/datasource", common.Preprocessing, common.AdminAuth, datasource.DeleteDatasource)
+	app.Put("/api/datasource", common.Preprocessing, common.AdminAuth, datasource.UpdateDataSourceConfig)
+	app.Put("/api/datasource/state", common.Preprocessing, common.AdminAuth, datasource.UpdateDataSourceState)
+	app.Get("/api/datasource/list", common.Preprocessing, common.AdminAuth, datasource.ListDataSources)
+	app.Get("/api/datasource", common.Preprocessing, common.AdminAuth, datasource.GetDataSource)
 }
 
 func startIris(wg *sync.WaitGroup, stopChan <-chan struct{}) {

@@ -1,6 +1,7 @@
 package datasource
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,13 +13,22 @@ import (
 	"gorm.io/gorm"
 )
 
-type model common.DataSourceStruct
+var db *gorm.DB
+
+type model struct {
+	ID          string    `gorm:"column:id;type:varchar(32);primaryKey;not null"`
+	State       int       `gorm:"column:state;type:integer;default:0"`
+	Name        string    `gorm:"column:name;type:varchar(32);uniqueIndex;not null"`
+	Description *string   `gorm:"column:description;type:varchar(256)"` // 使用指针允许NULL
+	Type        string    `gorm:"column:type;type:varchar(16);not null"`
+	Addr        string    `gorm:"column:addr;type:varchar(2048);not null"`
+	Ctime       time.Time `gorm:"column:ctime;not null"`
+	Utime       time.Time `gorm:"column:utime;not null"`
+}
 
 func (model) TableName() string {
 	return "datasource"
 }
-
-var db *gorm.DB
 
 func initSQLite(file string) error {
 	dir := filepath.Dir(file)
@@ -68,11 +78,23 @@ func closeSQLite() {
 // 	errNameNotFound   = errors.New("该规则不存在")
 // )
 
-func insert(m *model) error {
+func insert(m *common.DataSourceStruct) error {
 	m.ID = utils.GenerateUniqueIDV3(time.Now().GoString(), 8)
 	m.Ctime = time.Now()
 	m.Utime = m.Ctime
-	result := db.Create(m)
+
+	table := &model{}
+	table.ID = m.ID
+	table.State = m.State
+	table.Name = m.Name
+	table.Description = m.Description
+	table.Type = m.Type
+	table.Ctime = m.Ctime
+	table.Utime = m.Utime
+
+	b, _ := json.Marshal(m.Addr)
+	table.Addr = string(b)
+	result := db.Create(table)
 
 	return result.Error
 }
@@ -83,12 +105,13 @@ func deleteByID(id string) error {
 	return result.Error
 }
 
-func updateConfig(id string, m *model) error {
+func updateConfig(id string, c *common.DataSourceStruct) error {
+	b, _ := json.Marshal(c.Addr)
 	result := db.Model(&model{}).Where("id = ?", id).Updates(model{
-		Name:        m.Name,
-		Description: m.Description,
-		Type:        m.Type,
-		Addr:        m.Addr,
+		Name:        c.Name,
+		Description: c.Description,
+		Type:        c.Type,
+		Addr:        string(b),
 		Utime:       time.Now(),
 	})
 
@@ -104,18 +127,33 @@ func updateState(id string, state int) error {
 	return result.Error
 }
 
-func selectByID(id string) ([]model, error) {
-	var results []model
+func selectByID(id string) ([]common.DataSourceStruct, error) {
+	var ms []model
 
-	if err := db.Model(results).Where("id = ?", id).Find(&results).Error; err != nil {
+	if err := db.Model(ms).Where("id = ?", id).Find(&ms).Error; err != nil {
 		return nil, err
+	}
+
+	results := make([]common.DataSourceStruct, 0)
+	for _, m := range ms {
+		result := common.DataSourceStruct{
+			ID:          m.ID,
+			State:       m.State,
+			Name:        m.Name,
+			Description: m.Description,
+			Type:        m.Type,
+			Ctime:       m.Ctime,
+			Utime:       m.Utime,
+		}
+		json.Unmarshal([]byte(m.Addr), &result.Addr)
+		results = append(results, result)
 	}
 
 	return results, nil
 }
 
-func selectByName(state int, name string, fuzzy bool, pageNumber, pageSize *int) ([]model, error) {
-	var results []model
+func selectByName(state int, t string, name string, fuzzy bool, pageNumber, pageSize *int) ([]common.DataSourceStruct, error) {
+	var ms []model
 
 	if *pageNumber < 1 {
 		*pageNumber = 1
@@ -127,9 +165,12 @@ func selectByName(state int, name string, fuzzy bool, pageNumber, pageSize *int)
 		*pageSize = 500
 	}
 
-	records := db.Model(results)
+	records := db.Model(ms)
 	if state == 0 || state == 1 {
 		records = records.Where("state = ?", state)
+	}
+	if len(t) > 0 {
+		records = records.Where("type = ?", t)
 	}
 	if len(name) > 0 {
 		if fuzzy {
@@ -139,24 +180,29 @@ func selectByName(state int, name string, fuzzy bool, pageNumber, pageSize *int)
 		}
 	}
 
-	if err := records.Order("utime DESC").Offset((*pageNumber - 1) * *pageSize).Limit(*pageSize).Find(&results).Error; err != nil {
+	if err := records.Order("utime DESC").Offset((*pageNumber - 1) * *pageSize).Limit(*pageSize).Find(&ms).Error; err != nil {
 		return nil, err
+	}
+
+	results := make([]common.DataSourceStruct, 0)
+	for _, m := range ms {
+		result := common.DataSourceStruct{
+			ID:          m.ID,
+			State:       m.State,
+			Name:        m.Name,
+			Description: m.Description,
+			Type:        m.Type,
+			Ctime:       m.Ctime,
+			Utime:       m.Utime,
+		}
+		json.Unmarshal([]byte(m.Addr), &result.Addr)
+		results = append(results, result)
 	}
 
 	return results, nil
 }
 
-func selectByConfig(t, addr string) ([]model, error) {
-	var results []model
-
-	if err := db.Model(results).Where("type = ? and addr = ?", t, addr).Find(&results).Error; err != nil {
-		return nil, err
-	}
-
-	return results, nil
-}
-
-func count(state int, name string) (int64, error) {
+func selectCount(state int, t string, name string) (int64, error) {
 	var results []model
 	var total int64
 
@@ -164,6 +210,10 @@ func count(state int, name string) (int64, error) {
 
 	if state == 0 || state == 1 {
 		records = records.Where("state = ?", state)
+	}
+
+	if len(t) > 0 {
+		records = records.Where("type = ?", t)
 	}
 
 	if len(name) > 0 {
@@ -177,21 +227,51 @@ func count(state int, name string) (int64, error) {
 	return total, nil
 }
 
-func selectAll() ([]model, error) {
-	var results []model
+func selectAll() ([]common.DataSourceStruct, error) {
+	var ms []model
 
-	if err := db.Model(results).Where("state != ?", 0).Order("utime DESC").Find(&results).Error; err != nil {
+	if err := db.Model(ms).Order("utime DESC").Find(&ms).Error; err != nil {
 		return nil, err
+	}
+
+	results := make([]common.DataSourceStruct, 0)
+	for _, m := range ms {
+		result := common.DataSourceStruct{
+			ID:          m.ID,
+			State:       m.State,
+			Name:        m.Name,
+			Description: m.Description,
+			Type:        m.Type,
+			Ctime:       m.Ctime,
+			Utime:       m.Utime,
+		}
+		json.Unmarshal([]byte(m.Addr), &result.Addr)
+		results = append(results, result)
 	}
 
 	return results, nil
 }
 
-func selectOpenedOnly() ([]model, error) {
-	var results []model
+func selectOpenedOnly() ([]common.DataSourceStruct, error) {
+	var ms []model
 
-	if err := db.Model(results).Order("utime DESC").Find(&results).Error; err != nil {
+	if err := db.Model(ms).Where("state != ?", 0).Order("utime DESC").Find(&ms).Error; err != nil {
 		return nil, err
+	}
+
+	results := make([]common.DataSourceStruct, 0)
+	for _, m := range ms {
+		result := common.DataSourceStruct{
+			ID:          m.ID,
+			State:       m.State,
+			Name:        m.Name,
+			Description: m.Description,
+			Type:        m.Type,
+			Ctime:       m.Ctime,
+			Utime:       m.Utime,
+		}
+		json.Unmarshal([]byte(m.Addr), &result.Addr)
+		results = append(results, result)
 	}
 
 	return results, nil
