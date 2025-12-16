@@ -311,6 +311,11 @@ func UpdateDataSourceState(ctx iris.Context) {
 		state = 1
 	}
 
+	if state == items[0].State {
+		logger.Default(ctx).Warn("UpdateDataSourceState 状态没有改变")
+		common.ReturnOK(ctx, nil)
+	}
+
 	// 更新数据
 	err = updateState(id, state)
 	if err != nil {
@@ -319,10 +324,40 @@ func UpdateDataSourceState(ctx iris.Context) {
 		return
 	}
 
-	if state == 0 {
-		// TODO 开启
+	dataSourceDetail[items[0].ID] = &common.DataSourceDetailStruct{}
+	dataSourceDetail[items[0].ID].ID = items[0].ID
+	dataSourceDetail[items[0].ID].State = items[0].State
+	dataSourceDetail[items[0].ID].Name = items[0].Name
+	dataSourceDetail[items[0].ID].Description = items[0].Description
+	dataSourceDetail[items[0].ID].Type = items[0].Type
+	dataSourceDetail[items[0].ID].Addr = items[0].Addr
+	dataSourceDetail[items[0].ID].Ctime = items[0].Ctime
+	dataSourceDetail[items[0].ID].Utime = items[0].Utime
+	if state == 1 {
+		dataSourceDetail[items[0].ID].IsRunning = true
+		dataSourceDetail[items[0].ID].Message = "OK"
+		switch items[0].Type {
+		case "UDP":
+			if err := udpSourceRecord.Add(items[0].ID, items[0].Addr); err != nil {
+				dataSourceDetail[items[0].ID].IsRunning = false
+				dataSourceDetail[items[0].ID].Message = err.Error()
+			}
+		case "MQTT":
+			if err := mqttSourceRecord.Add(items[0].ID, items[0].Addr); err != nil {
+				dataSourceDetail[items[0].ID].IsRunning = true
+				dataSourceDetail[items[0].ID].Message = "OK"
+			}
+		}
 	} else {
-		// TODO 关闭
+		dataSourceDetail[items[0].ID].IsRunning = false
+		dataSourceDetail[items[0].ID].Message = ""
+		switch items[0].Type {
+		case "UDP":
+			udpSourceRecord.Delete(items[0].ID)
+
+		case "MQTT":
+			mqttSourceRecord.Delete(items[0].ID)
+		}
 	}
 
 	common.ReturnOK(ctx, nil)
@@ -367,8 +402,19 @@ func ListDataSources(ctx iris.Context) {
 
 	for _, value := range items {
 		one := &common.DataSourceDetailStruct{}
-		one.DataSourceStruct = value
-		// TODO 添加数据源运行状态的逻辑
+		one.ID = value.ID
+		one.State = value.State
+		one.Name = value.Name
+		one.Description = value.Description
+		one.Type = value.Type
+		one.Addr = value.Addr
+		one.Ctime = value.Ctime
+		one.Utime = value.Utime
+		detail := getDataSourceDetail(value.ID)
+		if detail != nil {
+			one.IsRunning = detail.IsRunning
+			one.Message = detail.Message
+		}
 		rsp.List = append(rsp.List, one)
 
 	}
@@ -402,9 +448,20 @@ func GetDataSource(ctx iris.Context) {
 		return
 	}
 
-	// TODO 添加数据源运行状态的逻辑
 	rsp := &common.DataSourceDetailStruct{
-		DataSourceStruct: items[0],
+		ID:          items[0].ID,
+		State:       items[0].State,
+		Name:        items[0].Name,
+		Description: items[0].Description,
+		Type:        items[0].Type,
+		Addr:        items[0].Addr,
+		Ctime:       items[0].Ctime,
+		Utime:       items[0].Utime,
+	}
+	detail := getDataSourceDetail(items[0].ID)
+	if detail != nil {
+		rsp.IsRunning = detail.IsRunning
+		rsp.Message = detail.Message
 	}
 
 	common.ReturnOK(ctx, rsp)

@@ -57,9 +57,16 @@ func (m *DataSourceStruct) MarshalJSON() ([]byte, error) {
 
 // DataSourceDetailStruct 数据源(详细)结构体定义
 type DataSourceDetailStruct struct {
-	DataSourceStruct
-	IsRunning bool   `json:"is_running"`
-	Message   string `json:"message"`
+	ID          string                `json:"id"`
+	State       int                   `json:"state"`
+	Name        string                `json:"name"`
+	Description *string               `json:"description"` // 使用指针允许NULL
+	Type        string                `json:"type"`
+	Addr        *DataSourceAddrStruct `json:"addr"`
+	Ctime       time.Time             `json:"ctime"`
+	Utime       time.Time             `json:"utime"`
+	IsRunning   bool                  `json:"is_running"`
+	Message     string                `json:"message"`
 }
 
 // MarshalJSON 自定义序列化格式
