@@ -21,7 +21,7 @@ type sourceRecord interface {
 
 // UDP数据源记录
 type udpSourceRecordStruct struct {
-	conns                map[string]*net.UDPConn                    // key 是 id
+	conns                map[uint16]*net.UDPConn                    // key 是端口
 	configs              map[string]*common.DataSourceUDPAddrStruct // key 是 id
 	listenedPort         map[uint16]uint8                           // key 是端口
 	joinedMulticastGroup map[string]uint8                           // key 是组播地址
@@ -29,54 +29,97 @@ type udpSourceRecordStruct struct {
 }
 
 func (r *udpSourceRecordStruct) Add(id string, addr *common.DataSourceAddrStruct) error {
-	var err error
-	_, portExist := r.listenedPort[addr.UDP.Port]
-	if !portExist { // 这个端口还没有监听
-		localAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", addr.UDP.Port))
-		if err != nil {
-			return err
-		}
-		conn, err := net.ListenUDP("udp", localAddr)
-		if err != nil {
-			return err
-		}
-		r.conns[id] = conn
-		r.listenedPort[addr.UDP.Port] = 1
-	} else {
-		err = fmt.Errorf("UDP连接已存在, port:%d, multicastIP:%s", addr.UDP.Port, addr.UDP.MulticastIP)
+	// 单播和组播其实是支持端口复用的。第一版先简单做，认为会端口冲突，后面修改逻辑。
+	// 下面是支持 端口复用的代码，先注释
+	// var err error
+	// _, portExist := r.listenedPort[addr.UDP.Port]
+	// if !portExist { // 这个端口还没有监听
+	// 	localAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", addr.UDP.Port))
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	conn, err := net.ListenUDP("udp", localAddr)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	r.conns[addr.UDP.Port] = conn
+	// 	r.listenedPort[addr.UDP.Port] = 1
+	// } else {
+	// 	err = fmt.Errorf("UDP连接已存在, port:%d, multicastIP:%s", addr.UDP.Port, addr.UDP.MulticastIP)
+	// }
+
+	// if len(addr.UDP.MulticastIP) > 0 {
+	// 	_, groupExist := r.joinedMulticastGroup[addr.UDP.MulticastIP]
+	// 	if !groupExist {
+	// 		err = nil // 走到这里，说明连接没有重复
+	// 		var cf *multicastConfig
+	// 		cf, err = joinMulticastGroup(addr.UDP.MulticastIP, r.conns[addr.UDP.Port])
+	// 		if err != nil {
+	// 			fmt.Println(err)
+	// 			return err
+	// 		}
+	// 		r.joinedMulticastGroup[addr.UDP.MulticastIP] = 1
+	// 		r.multicastConfigs[addr.UDP.MulticastIP] = cf
+	// 	}
+	// }
+
+	// if err == nil {
+	// 	r.configs[id] = addr.UDP
+	// }
+	//下面是不支持 端口复用的代码，先注释
+	if _, portExist := r.listenedPort[addr.UDP.Port]; portExist {
+		return fmt.Errorf("UDP端口已被占用, port:%d", addr.UDP.Port)
 	}
+
+	localAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", addr.UDP.Port))
+	if err != nil {
+		return err
+	}
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return err
+	}
+	r.conns[addr.UDP.Port] = conn
+	r.listenedPort[addr.UDP.Port] = 1
 
 	if len(addr.UDP.MulticastIP) > 0 {
 		_, groupExist := r.joinedMulticastGroup[addr.UDP.MulticastIP]
 		if !groupExist {
-			err = nil // 走到这里，说明连接没有重复
-			var cf *multicastConfig
-			cf, err = joinMulticastGroup(addr.UDP.MulticastIP, r.conns[id])
+			cf, err := joinMulticastGroup(addr.UDP.MulticastIP, r.conns[addr.UDP.Port])
 			if err != nil {
-				return nil
+				return err
 			}
 			r.joinedMulticastGroup[addr.UDP.MulticastIP] = 1
-			r.multicastConfigs[id] = cf
+			r.multicastConfigs[addr.UDP.MulticastIP] = cf
 		}
 	}
+	r.configs[id] = addr.UDP
+
 	return err
 }
 
 func (r *udpSourceRecordStruct) Delete(id string) {
-	if v, ok := r.conns[id]; ok {
-		v.Close()
-		delete(r.conns, id)
-		if config, ok := r.configs[id]; ok {
-			delete(r.listenedPort, config.Port)
-			if _, ok := r.joinedMulticastGroup[config.MulticastIP]; ok {
-				// 离开组播
-				syscall.SetsockoptIPMreq(r.multicastConfigs[config.MulticastIP].Fd,
-					syscall.IPPROTO_IP, syscall.IP_DROP_MEMBERSHIP, r.multicastConfigs[config.MulticastIP].IPMreq)
-				delete(r.joinedMulticastGroup, config.MulticastIP)
-				delete(r.multicastConfigs, config.MulticastIP)
-			}
-			delete(r.configs, id)
+	if config, ok := r.configs[id]; ok {
+		port := config.Port
+		if v, ok := r.conns[port]; ok {
+			v.Close()
+			delete(r.conns, port)
+			delete(r.listenedPort, port)
 		}
+
+		if len(config.MulticastIP) > 0 {
+			err := syscall.SetsockoptIPMreq(r.multicastConfigs[config.MulticastIP].Fd,
+				syscall.IPPROTO_IP, syscall.IP_DROP_MEMBERSHIP, r.multicastConfigs[config.MulticastIP].IPMreq)
+			if err != nil {
+				fmt.Println("离开组播成功 " + config.MulticastIP)
+			} else {
+				fmt.Println("离开组播失败 " + config.MulticastIP)
+			}
+			delete(r.joinedMulticastGroup, config.MulticastIP)
+			delete(r.multicastConfigs, config.MulticastIP)
+		}
+
+		delete(r.configs, id)
 	}
 }
 
@@ -89,7 +132,7 @@ func (r *udpSourceRecordStruct) DeleteAll() {
 	for _, v := range r.conns {
 		v.Close()
 	}
-	r.conns = make(map[string]*net.UDPConn)
+	r.conns = make(map[uint16]*net.UDPConn)
 	r.configs = make(map[string]*common.DataSourceUDPAddrStruct)
 	r.listenedPort = make(map[uint16]uint8)
 	r.joinedMulticastGroup = make(map[string]uint8)
@@ -191,7 +234,7 @@ func Init() {
 	dataSourceDetail = make(map[string]*common.DataSourceDetailStruct)
 
 	udpSourceRecord = &udpSourceRecordStruct{
-		conns:                make(map[string]*net.UDPConn),
+		conns:                make(map[uint16]*net.UDPConn),
 		configs:              make(map[string]*common.DataSourceUDPAddrStruct),
 		listenedPort:         make(map[uint16]uint8),
 		joinedMulticastGroup: make(map[string]uint8),

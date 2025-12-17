@@ -48,10 +48,14 @@ func joinMulticastGroup(ip string, conn *net.UDPConn) (*multicastConfig, error) 
 	}
 
 	// 解析组播地址到 Multiaddr
-	copy(ipMreq.Multiaddr[:], ip)
+	copy(ipMreq.Multiaddr[:], net.ParseIP(ip).To4())
 	// 解析本地网卡地址到 Interface（多网卡时替换为具体IP，如 192.168.1.100）
 	// TODO
-	copy(ipMreq.Interface[:], "0.0.0.0")
+	copy(ipMreq.Interface[:], net.ParseIP("0.0.0.0").To4())
+
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
+		return nil, fmt.Errorf("加入组播组失败: %w", err)
+	}
 
 	// 加入组播组（setsockopt IP_ADD_MEMBERSHIP）
 	err = syscall.SetsockoptIPMreq(fd, syscall.IPPROTO_IP, syscall.IP_ADD_MEMBERSHIP, &ipMreq)
@@ -64,7 +68,7 @@ func joinMulticastGroup(ip string, conn *net.UDPConn) (*multicastConfig, error) 
 	// 	fmt.Println("已离开组播组")
 	// }()
 
-	// fmt.Println("成功加入组播组，开始接收消息...")
+	fmt.Println("成功加入组播组，" + ip)
 
 	// // 4. 循环接收组播消息
 	// buf := make([]byte, 1024)
