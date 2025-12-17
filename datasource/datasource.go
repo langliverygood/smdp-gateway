@@ -26,39 +26,124 @@ type DataMessage struct {
 // DataHandler 数据处理函数类型
 type DataHandler func(msg *DataMessage)
 
+// HandlerConfig 处理者配置
+type HandlerConfig struct {
+	Handler    DataHandler // 处理函数
+	Sequential bool        // 是否顺序处理（true=顺序，false=并发）
+	BufferSize int         // 顺序处理时的缓冲区大小，0表示使用默认值
+}
+
+// handlerInfo 内部处理者信息
+type handlerInfo struct {
+	config   HandlerConfig
+	dataChan chan *DataMessage // 顺序处理时使用的通道
+	ctx      context.Context   // 控制协程生命周期
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup // 等待处理协程结束
+}
+
 // DataBroadcaster 数据广播器，支持多个处理者订阅
 type DataBroadcaster struct {
-	handlers map[string]DataHandler // key是处理者ID
+	handlers map[string]*handlerInfo // key是处理者ID
 	mu       sync.RWMutex
 }
 
 // NewDataBroadcaster 创建新的数据广播器
 func NewDataBroadcaster() *DataBroadcaster {
 	return &DataBroadcaster{
-		handlers: make(map[string]DataHandler),
+		handlers: make(map[string]*handlerInfo),
 	}
 }
 
-// Subscribe 订阅数据，返回取消订阅的函数
+// Subscribe 订阅数据（并发处理），返回取消订阅的函数
 func (db *DataBroadcaster) Subscribe(handlerID string, handler DataHandler) func() {
+	return db.SubscribeWithConfig(handlerID, HandlerConfig{
+		Handler:    handler,
+		Sequential: false, // 并发处理
+	})
+}
+
+// SubscribeSequential 订阅数据（顺序处理），返回取消订阅的函数
+func (db *DataBroadcaster) SubscribeSequential(handlerID string, handler DataHandler, bufferSize int) func() {
+	if bufferSize <= 0 {
+		bufferSize = 100 // 默认缓冲区大小
+	}
+	return db.SubscribeWithConfig(handlerID, HandlerConfig{
+		Handler:    handler,
+		Sequential: true,
+		BufferSize: bufferSize,
+	})
+}
+
+// SubscribeWithConfig 使用配置订阅数据，返回取消订阅的函数
+func (db *DataBroadcaster) SubscribeWithConfig(handlerID string, config HandlerConfig) func() {
 	db.mu.Lock()
-	db.handlers[handlerID] = handler
-	db.mu.Unlock()
+	defer db.mu.Unlock()
+
+	// 如果已存在，先清理
+	if existing, exists := db.handlers[handlerID]; exists {
+		existing.cancel()
+		existing.wg.Wait()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	info := &handlerInfo{
+		config: config,
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	if config.Sequential {
+		// 顺序处理：创建通道和处理协程
+		bufferSize := config.BufferSize
+		if bufferSize <= 0 {
+			bufferSize = 100
+		}
+		info.dataChan = make(chan *DataMessage, bufferSize)
+
+		info.wg.Add(1)
+		go func() {
+			defer info.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg := <-info.dataChan:
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								// 处理panic，避免影响其他处理者
+							}
+						}()
+						config.Handler(msg)
+					}()
+				}
+			}
+		}()
+	}
+
+	db.handlers[handlerID] = info
 
 	// 返回取消订阅的函数
 	return func() {
 		db.mu.Lock()
-		delete(db.handlers, handlerID)
-		db.mu.Unlock()
+		if info, exists := db.handlers[handlerID]; exists {
+			info.cancel()
+			delete(db.handlers, handlerID)
+			db.mu.Unlock()
+			info.wg.Wait() // 等待处理协程结束
+		} else {
+			db.mu.Unlock()
+		}
 	}
 }
 
 // Broadcast 广播数据给所有订阅者
 func (db *DataBroadcaster) Broadcast(msg *DataMessage) {
 	db.mu.RLock()
-	handlers := make([]DataHandler, 0, len(db.handlers))
-	for _, handler := range db.handlers {
-		handlers = append(handlers, handler)
+	handlers := make([]*handlerInfo, 0, len(db.handlers))
+	for _, info := range db.handlers {
+		handlers = append(handlers, info)
 	}
 	db.mu.RUnlock()
 
@@ -67,16 +152,26 @@ func (db *DataBroadcaster) Broadcast(msg *DataMessage) {
 		return
 	}
 
-	// 并发调用所有处理者（非阻塞）
-	for _, handler := range handlers {
-		go func(h DataHandler) {
-			defer func() {
-				if r := recover(); r != nil {
-					// 处理panic，避免影响其他处理者
-				}
-			}()
-			h(msg)
-		}(handler)
+	// 分别处理并发和顺序处理者
+	for _, info := range handlers {
+		if info.config.Sequential {
+			// 顺序处理：发送到通道（非阻塞）
+			select {
+			case info.dataChan <- msg:
+			default:
+				// 通道满了，丢弃数据（可以根据需要调整策略）
+			}
+		} else {
+			// 并发处理：启动新协程
+			go func(handler DataHandler) {
+				defer func() {
+					if r := recover(); r != nil {
+						// 处理panic，避免影响其他处理者
+					}
+				}()
+				handler(msg)
+			}(info.config.Handler)
+		}
 	}
 }
 
@@ -530,17 +625,27 @@ func getDataSourceDetail(id string) *common.DataSourceDetailStruct {
 	return nil
 }
 
-// SubscribeUDPData 订阅UDP数据，返回取消订阅的函数
+// SubscribeUDPData 订阅UDP数据（并发处理），返回取消订阅的函数
 func SubscribeUDPData(handlerID string, handler DataHandler) func() {
 	return udpSourceRecord.broadcaster.Subscribe(handlerID, handler)
 }
 
-// SubscribeMQTTData 订阅MQTT数据，返回取消订阅的函数
+// SubscribeUDPDataSequential 订阅UDP数据（顺序处理），返回取消订阅的函数
+func SubscribeUDPDataSequential(handlerID string, handler DataHandler, bufferSize int) func() {
+	return udpSourceRecord.broadcaster.SubscribeSequential(handlerID, handler, bufferSize)
+}
+
+// SubscribeMQTTData 订阅MQTT数据（并发处理），返回取消订阅的函数
 func SubscribeMQTTData(handlerID string, handler DataHandler) func() {
 	return mqttSourceRecord.broadcaster.Subscribe(handlerID, handler)
 }
 
-// SubscribeAllData 订阅所有数据源的数据，返回取消订阅的函数
+// SubscribeMQTTDataSequential 订阅MQTT数据（顺序处理），返回取消订阅的函数
+func SubscribeMQTTDataSequential(handlerID string, handler DataHandler, bufferSize int) func() {
+	return mqttSourceRecord.broadcaster.SubscribeSequential(handlerID, handler, bufferSize)
+}
+
+// SubscribeAllData 订阅所有数据源的数据（并发处理），返回取消订阅的函数
 func SubscribeAllData(handlerID string, handler DataHandler) func() {
 	unsubscribeUDP := SubscribeUDPData(handlerID+"_udp", handler)
 	unsubscribeMQTT := SubscribeMQTTData(handlerID+"_mqtt", handler)
@@ -549,6 +654,37 @@ func SubscribeAllData(handlerID string, handler DataHandler) func() {
 	return func() {
 		unsubscribeUDP()
 		unsubscribeMQTT()
+	}
+}
+
+// SubscribeAllDataSequential 订阅所有数据源的数据（顺序处理），返回取消订阅的函数
+func SubscribeAllDataSequential(handlerID string, handler DataHandler, bufferSize int) func() {
+	unsubscribeUDP := SubscribeUDPDataSequential(handlerID+"_udp", handler, bufferSize)
+	unsubscribeMQTT := SubscribeMQTTDataSequential(handlerID+"_mqtt", handler, bufferSize)
+
+	// 返回取消所有订阅的函数
+	return func() {
+		unsubscribeUDP()
+		unsubscribeMQTT()
+	}
+}
+
+// SubscribeWithConfig 使用自定义配置订阅数据
+func SubscribeWithConfig(handlerID string, config HandlerConfig, dataSource string) func() {
+	switch dataSource {
+	case "UDP":
+		return udpSourceRecord.broadcaster.SubscribeWithConfig(handlerID, config)
+	case "MQTT":
+		return mqttSourceRecord.broadcaster.SubscribeWithConfig(handlerID, config)
+	case "ALL":
+		unsubscribeUDP := udpSourceRecord.broadcaster.SubscribeWithConfig(handlerID+"_udp", config)
+		unsubscribeMQTT := mqttSourceRecord.broadcaster.SubscribeWithConfig(handlerID+"_mqtt", config)
+		return func() {
+			unsubscribeUDP()
+			unsubscribeMQTT()
+		}
+	default:
+		return func() {} // 无效的数据源
 	}
 }
 
