@@ -47,14 +47,16 @@ var (
 	ErrCodeDataSourceUDPAddrInvalidPort = -10012
 	// ErrCodeDataSourceMQTTAddrInvalid 数据源MQTT地址无效
 	ErrCodeDataSourceMQTTAddrInvalid = -10013
+	// ErrCodeDataSourceMQTTAddrBrokerInvalid 数据源MQTT Broker无效，仅支持IP:端口
+	ErrCodeDataSourceMQTTAddrBrokerInvalid = -10014
 	// ErrCodeDataSourceMQTTAddrTopicTooLong 数据源MQTT主题长度超过限制
-	ErrCodeDataSourceMQTTAddrTopicTooLong = -10014
+	ErrCodeDataSourceMQTTAddrTopicTooLong = -10015
 	// ErrCodeDataSourceMQTTAddrTopicInvalid 数据源MQTT主题格式无效
-	ErrCodeDataSourceMQTTAddrTopicInvalid = -10015
+	ErrCodeDataSourceMQTTAddrTopicInvalid = -10016
 	// ErrCodeDataSourceIDNotFound 数据源协议ID不存在
-	ErrCodeDataSourceIDNotFound = -10016
+	ErrCodeDataSourceIDNotFound = -10017
 	// ErrCodeDataSourceStateOpened 数据源为开启状态,无法更新或删除
-	ErrCodeDataSourceStateOpened = -10017
+	ErrCodeDataSourceStateOpened = -10018
 )
 
 func init() {
@@ -83,6 +85,7 @@ func init() {
 	CodeMessage[ErrCodeDataSourceUDPAddrInvalidIP] = "数据源UDP地址IP无效,仅支持组播地址"
 	CodeMessage[ErrCodeDataSourceUDPAddrInvalidPort] = "数据源UDP地址端口无效(端口范围1~65535)"
 	CodeMessage[ErrCodeDataSourceMQTTAddrInvalid] = "数据源MQTT地址无效"
+	CodeMessage[ErrCodeDataSourceMQTTAddrBrokerInvalid] = "数据源MQTT Broker无效, 仅支持IP:端口"
 	CodeMessage[ErrCodeDataSourceMQTTAddrTopicTooLong] = "数据源MQTT主题长度超过限制"
 	CodeMessage[ErrCodeDataSourceMQTTAddrTopicInvalid] = "数据源MQTT主题格式无效"
 	CodeMessage[ErrCodeDataSourceIDNotFound] = "数据源协议ID不存在"

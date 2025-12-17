@@ -3,7 +3,9 @@ package datasource
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"smdp-gateway/common"
+	"strings"
 	"syscall"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -101,13 +103,30 @@ type mqttSourceRecordStruct struct {
 }
 
 func (r *mqttSourceRecordStruct) Add(id string, addr *common.DataSourceAddrStruct) error {
-	if _, ok := r.client[addr.MQTT.Broker]; !ok {
-		r.client[addr.MQTT.Broker] = make(map[string]uint8)
+	broker := addr.MQTT.Broker
+	// 解析为 URL
+	u, err := url.Parse(broker)
+	if err == nil {
+		broker = u.Host
+	} else {
+		if strings.Contains(broker, ":") {
+			if _, _, err := net.SplitHostPort(broker); err != nil {
+				return err
+			}
+		} else {
+			if _, err := net.ResolveIPAddr("ip", broker); err != nil {
+				return err
+			}
+		}
 	}
-	broker := r.client[addr.MQTT.Broker]
-	if _, ok := broker[addr.MQTT.ClientID]; !ok {
+
+	if _, ok := r.client[broker]; !ok {
+		r.client[broker] = make(map[string]uint8)
+	}
+
+	if _, ok := r.client[broker][addr.MQTT.ClientID]; !ok {
 		opts := mqtt.NewClientOptions()
-		opts.AddBroker(addr.MQTT.Broker)
+		opts.AddBroker(broker)
 		opts.SetClientID(addr.MQTT.ClientID)
 		// TODD 后面要支持 两种认证方式
 		opts.SetUsername(addr.MQTT.ClientID)
@@ -125,7 +144,7 @@ func (r *mqttSourceRecordStruct) Add(id string, addr *common.DataSourceAddrStruc
 
 		r.conns[id] = mqttClient
 		r.configs[id] = addr.MQTT
-		broker[addr.MQTT.ClientID] = 1
+		r.client[broker][addr.MQTT.ClientID] = 1
 	} else {
 		return fmt.Errorf("MQTT连接已存在, broker:%s, clientID:%s", addr.MQTT.Broker, addr.MQTT.ClientID)
 	}

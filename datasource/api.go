@@ -106,6 +106,29 @@ func checkDataSourceAddrWhenMQTT(ctx iris.Context, mqtt *common.DataSourceMQTTAd
 		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
 		return false
 	}
+	// 目前仅支持 ip+port 的格式，以免后面去重出问题
+	host, portStr, err := net.SplitHostPort(mqtt.Broker)
+	if err != nil {
+		errCode := common.ErrCodeDataSourceMQTTAddrBrokerInvalid
+		common.ReturnBadRequest(ctx, errCode)
+		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		errCode := common.ErrCodeDataSourceMQTTAddrBrokerInvalid
+		common.ReturnBadRequest(ctx, errCode)
+		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
+		return false
+	}
+	_, err = net.LookupPort("", portStr)
+	if err != nil {
+		errCode := common.ErrCodeDataSourceMQTTAddrBrokerInvalid
+		common.ReturnBadRequest(ctx, errCode)
+		logger.Default(ctx).Error("checkDataSourceAddrWhenMQTT " + common.CodeMessage[errCode])
+		return false
+	}
+
 	for _, t := range mqtt.Topics {
 		if len(t) > 2048 {
 			errCode := common.ErrCodeDataSourceMQTTAddrTopicTooLong
@@ -314,6 +337,7 @@ func UpdateDataSourceState(ctx iris.Context) {
 	if state == items[0].State {
 		logger.Default(ctx).Warn("UpdateDataSourceState 状态没有改变")
 		common.ReturnOK(ctx, nil)
+		return
 	}
 
 	// 更新数据
@@ -344,8 +368,8 @@ func UpdateDataSourceState(ctx iris.Context) {
 			}
 		case "MQTT":
 			if err := mqttSourceRecord.Add(items[0].ID, items[0].Addr); err != nil {
-				dataSourceDetail[items[0].ID].IsRunning = true
-				dataSourceDetail[items[0].ID].Message = "OK"
+				dataSourceDetail[items[0].ID].IsRunning = false
+				dataSourceDetail[items[0].ID].Message = err.Error()
 			}
 		}
 	} else {
